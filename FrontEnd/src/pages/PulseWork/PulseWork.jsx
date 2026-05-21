@@ -4,11 +4,11 @@ import api from '../../services/api';
 import { showSuccess, showError } from '../../utils/alerts';
 
 const EMOTIONS = [
-  { value: 1, label: 'Muy mal',  icon: 'fi-rr-face-disappointed', color: 'border-red-400    bg-red-50    text-red-600'    },
-  { value: 2, label: 'Mal',      icon: 'fi-rr-face-sad',          color: 'border-orange-400 bg-orange-50 text-orange-600' },
-  { value: 3, label: 'Regular',  icon: 'fi-rr-face-confused',     color: 'border-yellow-400 bg-yellow-50 text-yellow-600' },
-  { value: 4, label: 'Bien',     icon: 'fi-rr-face-smile',        color: 'border-brand-400  bg-brand-50  text-brand-600'  },
-  { value: 5, label: 'Muy bien', icon: 'fi-rr-face-awesome',      color: 'border-brand-500  bg-brand-100 text-brand-700'  },
+  { value: 1, label: 'Muy mal',  icon: 'fi-rr-face-disappointed',  color: 'border-red-400    bg-red-50    text-red-600'    },
+  { value: 2, label: 'Mal',      icon: 'fi-rr-face-pensive',       color: 'border-orange-400 bg-orange-50 text-orange-600' },
+  { value: 3, label: 'Regular',  icon: 'fi-rr-face-confused',      color: 'border-yellow-400 bg-yellow-50 text-yellow-600' },
+  { value: 4, label: 'Bien',     icon: 'fi-rr-face-smile-tear',    color: 'border-brand-400  bg-brand-50  text-brand-600'  },
+  { value: 5, label: 'Muy bien', icon: 'fi-rr-face-awesome',       color: 'border-brand-500  bg-brand-100 text-brand-700'  },
 ];
 
 const FACTORS = [

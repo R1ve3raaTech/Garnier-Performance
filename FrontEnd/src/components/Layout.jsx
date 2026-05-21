@@ -25,6 +25,10 @@ const NAV_RH = [
   { path: '/rag-documents',     label: 'Gestión RAG',    icon: 'fi-rr-folder'           },
 ];
 
+const NAV_ADMIN = [
+  { path: '/user-management', label: 'Usuarios', icon: 'fi-rr-users-alt' },
+];
+
 const ROLE_BADGE = {
   Funcionario: 'bg-brand-100  text-brand-700',
   Jefatura:    'bg-brand-200  text-brand-800',
@@ -38,7 +42,7 @@ const Layout = () => {
   const role = user?.role ?? '';
 
   const extraNav =
-    role === 'Admin'    ? [...NAV_JEFATURA, ...NAV_RH] :
+    role === 'Admin'    ? [...NAV_JEFATURA, ...NAV_RH, ...NAV_ADMIN] :
     role === 'RH'       ? NAV_RH :
     role === 'Jefatura' ? NAV_JEFATURA :
     [];

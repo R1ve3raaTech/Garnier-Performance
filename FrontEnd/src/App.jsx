@@ -19,6 +19,7 @@ import Feedback         from './pages/Feedback/Feedback';
 import SurveyManagement from './pages/SurveyManagement/SurveyManagement';
 import Escalations      from './pages/Escalations/Escalations';
 import Profile          from './pages/Profile/Profile';
+import UserManagement  from './pages/UserManagement/UserManagement';
 
 const App = () => (
   <BrowserRouter>
@@ -52,6 +53,11 @@ const App = () => (
               <Route path="survey-management" element={<SurveyManagement />} />
               <Route path="escalations"       element={<Escalations />} />
               <Route path="rag-documents"     element={<RAGDocuments />} />
+            </Route>
+
+            {/* Solo Admin */}
+            <Route element={<ProtectedRoute allowedRoles={['Admin']} />}>
+              <Route path="user-management" element={<UserManagement />} />
             </Route>
           </Route>
         </Route>

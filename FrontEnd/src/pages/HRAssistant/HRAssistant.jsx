@@ -106,16 +106,50 @@ const HRAssistant = () => {
   const [userContext,    setUserContext]     = useState({});
   const [input,          setInput]          = useState('');
   const [loading,        setLoading]        = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [prevSession,    setPrevSession]    = useState(null); // { messages, sessionId }
   const bottomRef     = useRef(null);
   const initialized   = useRef(false);
-  // ID de sesión único por montaje del componente
   const sessionId     = useRef(Date.now().toString(36) + Math.random().toString(36).slice(2));
 
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-    showNextQuestion(0, {});
+
+    api.get('/hr-assistant/history').then(({ data }) => {
+      const msgs = data.data?.messages ?? [];
+      const sid  = data.data?.lastSession;
+      if (msgs.length > 0 && sid) {
+        setPrevSession({ messages: msgs, sessionId: sid });
+      } else {
+        showNextQuestion(0, {});
+      }
+    }).catch(() => {
+      showNextQuestion(0, {});
+    }).finally(() => {
+      setHistoryLoading(false);
+    });
   }, []);
+
+  const restoreSession = () => {
+    if (!prevSession) return;
+    sessionId.current = prevSession.sessionId;
+    const restored = prevSession.messages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      text: m.content,
+      sources: m.sources ?? [],
+      escalated: !!m.escalated,
+    }));
+    setMessages(restored);
+    setOnboardingStep(ONBOARDING_STEPS.length);
+    setPrevSession(null);
+  };
+
+  const startNewSession = () => {
+    setPrevSession(null);
+    showNextQuestion(0, {});
+  };
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -188,6 +222,50 @@ const HRAssistant = () => {
   };
 
   const inputEnabled = onboardingStep >= ONBOARDING_STEPS.length;
+
+  if (historyLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (prevSession) {
+    return (
+      <div className="flex items-center justify-center h-full p-6">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 max-w-sm w-full text-center"
+        >
+          <div className="w-14 h-14 rounded-2xl bg-brand-100 flex items-center justify-center mx-auto mb-4">
+            <i className="fi fi-rr-time-past text-brand-500 text-2xl leading-none" />
+          </div>
+          <h2 className="text-lg font-bold text-garnier-800 mb-2">Tienes una conversación anterior</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            Tienes {prevSession.messages.length} mensaje{prevSession.messages.length !== 1 ? 's' : ''} guardados de tu última sesión con el HR Assistant.
+          </p>
+          <div className="space-y-3">
+            <button
+              onClick={restoreSession}
+              className="w-full px-4 py-2.5 bg-brand-500 hover:bg-brand-600 text-white rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <i className="fi fi-rr-redo leading-none" />
+              Retomar conversación
+            </button>
+            <button
+              onClick={startNewSession}
+              className="w-full px-4 py-2.5 border border-gray-200 hover:bg-gray-50 text-gray-600 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <i className="fi fi-rr-add leading-none" />
+              Iniciar nueva conversación
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <motion.div
