@@ -2,7 +2,7 @@ import path    from 'path';
 import fs      from 'fs';
 import { fileURLToPath } from 'url';
 import multer  from 'multer';
-import pool    from '../../config/db.js';
+import supabase from '../../config/supabaseClient.js';
 
 const __dirname  = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
@@ -37,15 +37,16 @@ export const upload = multer({
 // ── GET /api/v1/rag/documents ─────────────────────────────────────────────────
 export const getDocuments = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT r.id, r.original_name, r.file_size, r.mime_type,
-              r.status, r.sections, r.created_at,
-              u.name AS uploaded_by_name
-       FROM   rag_documents r
-       JOIN   users u ON r.uploaded_by = u.id
-       ORDER  BY r.created_at DESC`
-    );
-    res.json({ success: true, data: rows });
+    const { data, error } = await supabase
+      .from('rag_documents')
+      .select('id, original_name, file_size, mime_type, status, sections, created_at, profiles(name)')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: data.map((d) => ({ ...d, uploaded_by_name: d.profiles?.name, profiles: undefined })),
+    });
   } catch (error) {
     next(error);
   }
@@ -62,21 +63,20 @@ export const uploadDocument = async (req, res, next) => {
 
     const { originalname, filename, size, mimetype } = req.file;
 
-    const [result] = await pool.execute(
-      `INSERT INTO rag_documents (original_name, filename, file_size, mime_type, status, uploaded_by)
-       VALUES (?, ?, ?, ?, 'processing', ?)`,
-      [originalname, filename, size, mimetype, req.user.id]
-    );
+    const { data, error } = await supabase.from('rag_documents').insert({
+      original_name: originalname, filename, file_size: size, mime_type: mimetype,
+      status: 'processing', uploaded_by: req.user.id,
+    }).select('id').single();
+    if (error) throw error;
 
-    const docId = result.insertId;
+    const docId = data.id;
 
     // Simula el procesamiento de indexación (en producción sería un job asíncrono)
     setTimeout(async () => {
       try {
-        await pool.execute(
-          `UPDATE rag_documents SET status = 'active', sections = ? WHERE id = ?`,
-          [JSON.stringify(['Sección detectada automáticamente']), docId]
-        );
+        await supabase.from('rag_documents')
+          .update({ status: 'active', sections: ['Sección detectada automáticamente'] })
+          .eq('id', docId);
       } catch { /* fallo silencioso del job simulado */ }
     }, 3000);
 
@@ -95,18 +95,19 @@ export const deleteDocument = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
 
-    const [rows] = await pool.execute(
-      'SELECT filename FROM rag_documents WHERE id = ?', [id]
-    );
+    const { data: rows, error: findError } = await supabase
+      .from('rag_documents').select('filename').eq('id', id);
+    if (findError) throw findError;
     if (!rows.length) {
       const err = new Error('Documento no encontrado'); err.status = 404; return next(err);
     }
 
-    // Eliminar archivo del disco
     const filePath = path.join(UPLOAD_DIR, rows[0].filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    await pool.execute('DELETE FROM rag_documents WHERE id = ?', [id]);
+    const { error } = await supabase.from('rag_documents').delete().eq('id', id);
+    if (error) throw error;
+
     res.json({ success: true, message: 'Documento eliminado correctamente' });
   } catch (error) {
     next(error);

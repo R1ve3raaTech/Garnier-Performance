@@ -1,17 +1,16 @@
-import pool from '../../config/db.js';
+import supabase from '../../config/supabaseClient.js';
 import { generateCompletion } from '../../services/iaService.js';
 import { searchSimilarContext, buildContextBlock } from './ragService.js';
 import { HR_ASSISTANT_SYSTEM_PROMPT, ESCALATION_MARKER } from './prompts.js';
 
 // Guarda un mensaje en chat_history de forma silenciosa (no bloquea la respuesta)
 const saveMessage = (userId, sessionId, role, content, extras = {}) => {
-  pool.execute(
-    `INSERT INTO chat_history (user_id, session_id, role, content, sources, escalated)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [userId, sessionId, role, content,
-     extras.sources ? JSON.stringify(extras.sources) : null,
-     extras.escalated ? 1 : 0]
-  ).catch((err) => console.error('[chat_history] Error guardando mensaje:', err.message));
+  supabase.from('chat_history').insert({
+    user_id: userId, session_id: sessionId, role, content,
+    sources: extras.sources ?? null, escalated: !!extras.escalated,
+  }).then(({ error }) => {
+    if (error) console.error('[chat_history] Error guardando mensaje:', error.message);
+  });
 };
 
 // ── GET /api/v1/hr-assistant/health ──────────────────────────────────────────
@@ -59,15 +58,14 @@ ${question}`;
     let unresolvedId = null;
 
     if (needsEscalation) {
-      const [result] = await pool.execute(
-        `INSERT INTO unresolved_queries (user_id, question, status) VALUES (?, ?, 'pending')`,
-        [userId, question]
-      );
-      unresolvedId = result.insertId;
+      const { data, error } = await supabase.from('unresolved_queries').insert({
+        user_id: userId, question, status: 'pending',
+      }).select('id').single();
+      if (error) throw error;
+      unresolvedId = data.id;
       console.warn(`[ESCALACIÓN] ID: ${unresolvedId} — Usuario: ${userId}`);
     }
 
-    // Persistir historial de forma asíncrona (no bloquea la respuesta)
     if (sessionId) {
       const sources = chunks.map((c) => ({ document: c.document, section: c.section }));
       saveMessage(userId, sessionId, 'user',      question, {});
@@ -90,40 +88,42 @@ ${question}`;
 };
 
 // ── GET /api/v1/hr-assistant/history ─────────────────────────────────────────
-// Devuelve las últimas sesiones del usuario (para recargar conversaciones)
 export const getChatHistory = async (req, res, next) => {
   try {
     const userId = req.user.id;
     const limit  = Math.min(Number(req.query.limit ?? 20), 50);
 
-    // Última sesión del usuario
-    const [sessions] = await pool.execute(
-      `SELECT DISTINCT session_id, MIN(created_at) AS started_at
-       FROM   chat_history
-       WHERE  user_id = ?
-       GROUP  BY session_id
-       ORDER  BY started_at DESC
-       LIMIT  5`,
-      [userId]
-    );
+    const { data: allMessages, error: sessionsError } = await supabase
+      .from('chat_history')
+      .select('session_id, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (sessionsError) throw sessionsError;
 
-    if (!sessions.length) return res.json({ success: true, data: { sessions: [], messages: [] } });
+    if (!allMessages.length) return res.json({ success: true, data: { sessions: [], messages: [] } });
 
-    // Mensajes de la sesión más reciente
+    const sessionStarts = new Map();
+    allMessages.forEach((m) => {
+      if (!sessionStarts.has(m.session_id) || m.created_at < sessionStarts.get(m.session_id)) {
+        sessionStarts.set(m.session_id, m.created_at);
+      }
+    });
+    const sessions = Array.from(sessionStarts.entries())
+      .map(([session_id, started_at]) => ({ session_id, started_at }))
+      .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))
+      .slice(0, 5);
+
     const lastSession = sessions[0].session_id;
-    const [messages]  = await pool.execute(
-      `SELECT id, role, content, sources, escalated, created_at
-       FROM   chat_history
-       WHERE  user_id = ? AND session_id = ?
-       ORDER  BY created_at ASC
-       LIMIT  ?`,
-      [userId, lastSession, limit]
-    );
+    const { data: messages, error: messagesError } = await supabase
+      .from('chat_history')
+      .select('id, role, content, sources, escalated, created_at')
+      .eq('user_id', userId)
+      .eq('session_id', lastSession)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    if (messagesError) throw messagesError;
 
-    const parsed = messages.map(({ sources, ...rest }) => ({
-      ...rest,
-      sources: sources ? (Array.isArray(sources) ? sources : JSON.parse(sources)) : [],
-    }));
+    const parsed = messages.map((m) => ({ ...m, sources: m.sources ?? [] }));
 
     res.json({ success: true, data: { sessions, lastSession, messages: parsed } });
   } catch (error) {
@@ -143,21 +143,22 @@ export const getUnresolvedQueries = async (req, res, next) => {
       return next(err);
     }
 
-    const [rows] = await pool.execute(
-      `SELECT uq.id, uq.question, uq.status, uq.created_at,
-              u.name  AS user_name,
-              u.area_id,
-              a.name  AS area_name,
-              ru.name AS resolved_by_name,
-              uq.resolved_at
-       FROM   unresolved_queries uq
-       JOIN   users u  ON uq.user_id     = u.id
-       JOIN   areas a  ON u.area_id      = a.id
-       LEFT JOIN users ru ON uq.resolved_by = ru.id
-       WHERE  uq.status = ?
-       ORDER  BY uq.created_at DESC`,
-      [status]
-    );
+    const { data, error } = await supabase
+      .from('unresolved_queries')
+      .select(`
+        id, question, status, created_at, resolved_at,
+        user:profiles!unresolved_queries_user_id_fkey(name, area_id, areas(name)),
+        resolver:profiles!unresolved_queries_resolved_by_fkey(name)
+      `)
+      .eq('status', status)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const rows = data.map((q) => ({
+      id: q.id, question: q.question, status: q.status, created_at: q.created_at,
+      user_name: q.user?.name, area_id: q.user?.area_id, area_name: q.user?.areas?.name,
+      resolved_by_name: q.resolver?.name, resolved_at: q.resolved_at,
+    }));
 
     res.json({ success: true, data: { total: rows.length, queries: rows } });
   } catch (error) {
@@ -174,19 +175,17 @@ export const resolveQuery = async (req, res, next) => {
       const err = new Error('id debe ser un número válido'); err.status = 400; return next(err);
     }
 
-    const [existing] = await pool.execute(
-      'SELECT id, status FROM unresolved_queries WHERE id = ?', [id]
-    );
+    const { data: existing, error: findError } = await supabase
+      .from('unresolved_queries').select('id').eq('id', id);
+    if (findError) throw findError;
     if (!existing.length) {
       const err = new Error('Consulta no encontrada'); err.status = 404; return next(err);
     }
 
-    await pool.execute(
-      `UPDATE unresolved_queries
-       SET status = 'resolved', resolved_by = ?, resolved_at = NOW()
-       WHERE id = ?`,
-      [req.user.id, id]
-    );
+    const { error } = await supabase.from('unresolved_queries').update({
+      status: 'resolved', resolved_by: req.user.id, resolved_at: new Date().toISOString(),
+    }).eq('id', id);
+    if (error) throw error;
 
     res.json({ success: true, message: 'Consulta marcada como resuelta' });
   } catch (error) {
@@ -205,15 +204,12 @@ export const updateQueryStatus = async (req, res, next) => {
       const err = new Error(`status debe ser: ${valid.join(', ')}`); err.status = 422; return next(err);
     }
 
-    const updates = status === 'resolved'
-      ? `status = ?, resolved_by = ?, resolved_at = NOW()`
-      : `status = ?`;
+    const patch = status === 'resolved'
+      ? { status, resolved_by: req.user.id, resolved_at: new Date().toISOString() }
+      : { status };
 
-    const params = status === 'resolved'
-      ? [status, req.user.id, id]
-      : [status, id];
-
-    await pool.execute(`UPDATE unresolved_queries SET ${updates} WHERE id = ?`, params);
+    const { error } = await supabase.from('unresolved_queries').update(patch).eq('id', id);
+    if (error) throw error;
 
     res.json({ success: true, message: `Consulta actualizada a: ${status}` });
   } catch (error) {

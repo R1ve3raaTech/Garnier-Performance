@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // ── Validación de variables de entorno obligatorias ───────────────────────────
-const REQUIRED_ENV = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'JWT_SECRET', 'ANTHROPIC_API_KEY'];
+const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'ANTHROPIC_API_KEY'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
 
 if (missing.length) {
@@ -12,7 +12,7 @@ if (missing.length) {
 }
 
 import app from './app.js';
-import { testConnection } from './config/db.js';
+import { testConnection } from './config/supabaseClient.js';
 
 const PORT = process.env.PORT || 3000;
 const ENV  = process.env.NODE_ENV ?? 'development';
@@ -22,7 +22,7 @@ const startServer = async () => {
   app.listen(PORT, () => {
     console.log(`\n🚀 Servidor corriendo en http://localhost:${PORT}`);
     console.log(`   Entorno : ${ENV}`);
-    console.log(`   BD      : ${process.env.DB_NAME}@${process.env.DB_HOST}\n`);
+    console.log(`   BD      : Supabase @ ${process.env.SUPABASE_URL}\n`);
   });
 };
 

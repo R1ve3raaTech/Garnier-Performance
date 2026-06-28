@@ -1,10 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import bcrypt from 'bcryptjs';
-import pool from '../src/config/db.js';
-
-const SALT_ROUNDS = 10;
+import supabase from '../src/config/supabaseClient.js';
 
 const users = [
   {
@@ -79,26 +76,35 @@ const seed = async () => {
   const insertedUsers = {};
 
   for (const u of users) {
-    const hash = await bcrypt.hash(u.password, SALT_ROUNDS);
-    const [result] = await pool.execute(
-      `INSERT INTO users (name, email, password_hash, role_id, area_id, position, hire_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE name = VALUES(name)`,
-      [u.name, u.email, hash, u.role_id, u.area_id, u.position, u.hire_date]
-    );
-    const [rows] = await pool.execute('SELECT id FROM users WHERE email = ?', [u.email]);
-    insertedUsers[u.email] = rows[0].id;
-    console.log(`Usuario creado: ${u.email}`);
+    const { data: existing } = await supabase.from('profiles').select('id').eq('email', u.email).maybeSingle();
+
+    let userId;
+    if (existing) {
+      userId = existing.id;
+      console.log(`Usuario ya existe, reutilizando: ${u.email}`);
+    } else {
+      const { data: created, error: authError } = await supabase.auth.admin.createUser({
+        email: u.email, password: u.password, email_confirm: true,
+      });
+      if (authError) throw authError;
+      userId = created.user.id;
+
+      const { error: profileError } = await supabase.from('profiles').insert({
+        id: userId, name: u.name, email: u.email,
+        role_id: u.role_id, area_id: u.area_id, position: u.position, hire_date: u.hire_date,
+      });
+      if (profileError) throw profileError;
+      console.log(`Usuario creado: ${u.email}`);
+    }
+
+    insertedUsers[u.email] = userId;
   }
 
   for (const gs of goalSeeds) {
     const userId = insertedUsers[gs.userEmail];
     for (const g of gs.goals) {
-      await pool.execute(
-        `INSERT INTO goals (user_id, type, title, description, target_value, current_value, unit, due_date, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, g.type, g.title, g.description, g.target_value, g.current_value, g.unit, g.due_date, g.status]
-      );
+      const { error } = await supabase.from('goals').insert({ user_id: userId, ...g });
+      if (error) throw error;
     }
     console.log(`Metas creadas para: ${gs.userEmail}`);
   }

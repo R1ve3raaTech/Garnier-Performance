@@ -1,4 +1,4 @@
-import pool from '../../config/db.js';
+import supabase from '../../config/supabaseClient.js';
 
 const VALID_CATEGORIES = ['logro','colaboracion','innovacion','liderazgo','servicio','actitud'];
 
@@ -9,23 +9,26 @@ export const getFeed = async (req, res, next) => {
     const areaId = req.user.area_id;
     const limit  = Math.min(Number(req.query.limit ?? 20), 50);
 
-    const [rows] = await pool.execute(
-      `SELECT r.id, r.title, r.message, r.category, r.created_at,
-              fu.name AS from_name,
-              tu.name AS to_name,
-              ta.name AS to_area
-       FROM   recognitions r
-       JOIN   users fu ON r.from_user_id = fu.id
-       JOIN   users tu ON r.to_user_id   = tu.id
-       JOIN   areas ta ON tu.area_id     = ta.id
-       WHERE  r.is_public = 1
-         AND  (fu.area_id = ? OR tu.area_id = ?)
-       ORDER  BY r.created_at DESC
-       LIMIT  ?`,
-      [areaId, areaId, limit]
-    );
+    const { data, error } = await supabase
+      .from('recognitions')
+      .select(`
+        id, title, message, category, created_at,
+        from_user:profiles!recognitions_from_user_id_fkey(name, area_id),
+        to_user:profiles!recognitions_to_user_id_fkey(name, area_id, areas(name))
+      `)
+      .eq('is_public', true)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
 
-    res.json({ success: true, data: rows });
+    const filtered = data
+      .filter((r) => r.from_user?.area_id === areaId || r.to_user?.area_id === areaId)
+      .map((r) => ({
+        id: r.id, title: r.title, message: r.message, category: r.category, created_at: r.created_at,
+        from_name: r.from_user?.name, to_name: r.to_user?.name, to_area: r.to_user?.areas?.name,
+      }));
+
+    res.json({ success: true, data: filtered });
   } catch (error) {
     next(error);
   }
@@ -34,16 +37,20 @@ export const getFeed = async (req, res, next) => {
 // ── GET /api/v1/recognitions/mine ─────────────────────────────────────────────
 export const getMine = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT r.id, r.title, r.message, r.category, r.is_public, r.created_at,
-              fu.name AS from_name
-       FROM   recognitions r
-       JOIN   users fu ON r.from_user_id = fu.id
-       WHERE  r.to_user_id = ?
-       ORDER  BY r.created_at DESC`,
-      [req.user.id]
-    );
-    res.json({ success: true, data: rows });
+    const { data, error } = await supabase
+      .from('recognitions')
+      .select('id, title, message, category, is_public, created_at, profiles!recognitions_from_user_id_fkey(name)')
+      .eq('to_user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: data.map((r) => ({
+        id: r.id, title: r.title, message: r.message, category: r.category,
+        is_public: r.is_public, created_at: r.created_at, from_name: r.profiles?.name,
+      })),
+    });
   } catch (error) {
     next(error);
   }
@@ -65,22 +72,22 @@ export const createRecognition = async (req, res, next) => {
       err.status = 422;
       return next(err);
     }
-    if (Number(toUserId) === fromUserId) {
+    if (toUserId === fromUserId) {
       const err = new Error('No puedes reconocerte a ti mismo');
       err.status = 422;
       return next(err);
     }
 
-    const [result] = await pool.execute(
-      `INSERT INTO recognitions (from_user_id, to_user_id, title, message, category, is_public)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [fromUserId, toUserId, title, message, category, isPublic !== false ? 1 : 0]
-    );
+    const { data, error } = await supabase.from('recognitions').insert({
+      from_user_id: fromUserId, to_user_id: toUserId, title, message, category,
+      is_public: isPublic !== false,
+    }).select('id').single();
+    if (error) throw error;
 
     res.status(201).json({
       success: true,
       message: '¡Reconocimiento enviado!',
-      data: { id: result.insertId },
+      data: { id: data.id },
     });
   } catch (error) {
     next(error);

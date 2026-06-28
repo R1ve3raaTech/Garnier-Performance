@@ -1,6 +1,4 @@
-import pool from '../../config/db.js';
-
-const COMPETENCIES = ['colaboracion','comunicacion','iniciativa','calidad','adaptabilidad'];
+import supabase from '../../config/supabaseClient.js';
 
 // ── POST /api/v1/feedback ─────────────────────────────────────────────────────
 export const createFeedback = async (req, res, next) => {
@@ -21,19 +19,14 @@ export const createFeedback = async (req, res, next) => {
       return next(err);
     }
 
-    const [result] = await pool.execute(
-      `INSERT INTO feedbacks (from_user_id, to_user_id, type, period, scores, comment, is_anonymous)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        fromUserId, toUserId, type,
-        period ?? null,
-        JSON.stringify(scores),
-        comment ?? null,
-        isAnonymous ? 1 : 0,
-      ]
-    );
+    const { data, error } = await supabase.from('feedbacks').insert({
+      from_user_id: fromUserId, to_user_id: toUserId, type,
+      period: period ?? null, scores, comment: comment ?? null,
+      is_anonymous: !!isAnonymous,
+    }).select('id').single();
+    if (error) throw error;
 
-    res.status(201).json({ success: true, message: 'Feedback registrado correctamente', data: { id: result.insertId } });
+    res.status(201).json({ success: true, message: 'Feedback registrado correctamente', data: { id: data.id } });
   } catch (error) {
     next(error);
   }
@@ -42,19 +35,17 @@ export const createFeedback = async (req, res, next) => {
 // ── GET /api/v1/feedback/received ────────────────────────────────────────────
 export const getReceived = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT f.id, f.type, f.period, f.scores, f.comment, f.is_anonymous, f.created_at,
-              CASE WHEN f.is_anonymous = 1 THEN 'Anónimo' ELSE fu.name END AS from_name
-       FROM   feedbacks f
-       JOIN   users fu ON f.from_user_id = fu.id
-       WHERE  f.to_user_id = ?
-       ORDER  BY f.created_at DESC`,
-      [req.user.id]
-    );
+    const { data, error } = await supabase
+      .from('feedbacks')
+      .select('id, type, period, scores, comment, is_anonymous, created_at, from_user_id, profiles!feedbacks_from_user_id_fkey(name)')
+      .eq('to_user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
 
-    const parsed = rows.map(({ scores, ...rest }) => ({
-      ...rest,
-      scores: Array.isArray(scores) ? scores : (typeof scores === 'string' ? JSON.parse(scores) : scores),
+    const parsed = data.map((f) => ({
+      id: f.id, type: f.type, period: f.period, scores: f.scores, comment: f.comment,
+      is_anonymous: f.is_anonymous, created_at: f.created_at,
+      from_name: f.is_anonymous ? 'Anónimo' : f.profiles?.name,
     }));
 
     res.json({ success: true, data: parsed });
@@ -66,19 +57,16 @@ export const getReceived = async (req, res, next) => {
 // ── GET /api/v1/feedback/given ────────────────────────────────────────────────
 export const getGiven = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT f.id, f.type, f.period, f.scores, f.comment, f.created_at,
-              tu.name AS to_name
-       FROM   feedbacks f
-       JOIN   users tu ON f.to_user_id = tu.id
-       WHERE  f.from_user_id = ?
-       ORDER  BY f.created_at DESC`,
-      [req.user.id]
-    );
+    const { data, error } = await supabase
+      .from('feedbacks')
+      .select('id, type, period, scores, comment, created_at, to_user_id, profiles!feedbacks_to_user_id_fkey(name)')
+      .eq('from_user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
 
-    const parsed = rows.map(({ scores, ...rest }) => ({
-      ...rest,
-      scores: Array.isArray(scores) ? scores : (typeof scores === 'string' ? JSON.parse(scores) : scores),
+    const parsed = data.map((f) => ({
+      id: f.id, type: f.type, period: f.period, scores: f.scores, comment: f.comment,
+      created_at: f.created_at, to_name: f.profiles?.name,
     }));
 
     res.json({ success: true, data: parsed });
@@ -90,21 +78,19 @@ export const getGiven = async (req, res, next) => {
 // ── GET /api/v1/feedback/team/:userId (Jefatura) ──────────────────────────────
 export const getTeamFeedback = async (req, res, next) => {
   try {
-    const userId = Number(req.params.userId);
+    const userId = req.params.userId;
 
-    const [rows] = await pool.execute(
-      `SELECT f.id, f.type, f.period, f.scores, f.comment, f.is_anonymous, f.created_at,
-              CASE WHEN f.is_anonymous = 1 THEN 'Anónimo' ELSE fu.name END AS from_name
-       FROM   feedbacks f
-       JOIN   users fu ON f.from_user_id = fu.id
-       WHERE  f.to_user_id = ?
-       ORDER  BY f.created_at DESC`,
-      [userId]
-    );
+    const { data, error } = await supabase
+      .from('feedbacks')
+      .select('id, type, period, scores, comment, is_anonymous, created_at, from_user_id, profiles!feedbacks_from_user_id_fkey(name)')
+      .eq('to_user_id', userId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
 
-    const parsed = rows.map(({ scores, ...rest }) => ({
-      ...rest,
-      scores: Array.isArray(scores) ? scores : (typeof scores === 'string' ? JSON.parse(scores) : scores),
+    const parsed = data.map((f) => ({
+      id: f.id, type: f.type, period: f.period, scores: f.scores, comment: f.comment,
+      is_anonymous: f.is_anonymous, created_at: f.created_at,
+      from_name: f.is_anonymous ? 'Anónimo' : f.profiles?.name,
     }));
 
     res.json({ success: true, data: { userId, feedbacks: parsed } });

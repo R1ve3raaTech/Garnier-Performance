@@ -1,4 +1,4 @@
-import pool from '../../config/db.js';
+import supabase from '../../config/supabaseClient.js';
 import * as XLSX from 'xlsx';
 import { categorizeENPSComments, generateENPSExecutiveSummary } from '../../services/iaService.js';
 
@@ -11,18 +11,9 @@ const calcSeniorityYears = (hireDate) => {
 // ── GET /api/v1/enps/surveys ──────────────────────────────────────────────────
 export const getSurveys = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT s.id, s.title, s.description, s.period, s.status,
-              s.start_date, s.end_date, s.created_at,
-              u.name AS created_by_name,
-              COUNT(r.id) AS response_count
-       FROM   surveys s
-       JOIN   users u ON s.created_by = u.id
-       LEFT JOIN enps_responses r ON r.survey_id = s.id
-       GROUP  BY s.id
-       ORDER  BY s.created_at DESC`
-    );
-    res.json({ success: true, data: rows });
+    const { data, error } = await supabase.rpc('enps_surveys_with_counts');
+    if (error) throw error;
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }
@@ -31,17 +22,18 @@ export const getSurveys = async (req, res, next) => {
 // ── GET /api/v1/enps/surveys/active ──────────────────────────────────────────
 export const getActiveSurvey = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT id, title, description, period, start_date, end_date
-       FROM   surveys
-       WHERE  status = 'active'
-       ORDER  BY created_at DESC
-       LIMIT  1`
-    );
-    if (!rows.length) {
+    const { data, error } = await supabase
+      .from('surveys')
+      .select('id, title, description, period, start_date, end_date')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) throw error;
+
+    if (!data.length) {
       return res.json({ success: true, data: null, message: 'No hay encuesta activa en este momento.' });
     }
-    res.json({ success: true, data: rows[0] });
+    res.json({ success: true, data: data[0] });
   } catch (error) {
     next(error);
   }
@@ -58,19 +50,19 @@ export const createSurvey = async (req, res, next) => {
       return next(err);
     }
 
-    // Cerrar encuestas activas anteriores
-    await pool.execute(`UPDATE surveys SET status = 'closed' WHERE status = 'active'`);
+    await supabase.from('surveys').update({ status: 'closed' }).eq('status', 'active');
 
-    const [result] = await pool.execute(
-      `INSERT INTO surveys (title, description, period, status, start_date, end_date, created_by)
-       VALUES (?, ?, ?, 'active', ?, ?, ?)`,
-      [title, description ?? null, period ?? null, startDate ?? null, endDate ?? null, req.user.id]
-    );
+    const { data, error } = await supabase.from('surveys').insert({
+      title, description: description ?? null, period: period ?? null,
+      status: 'active', start_date: startDate ?? null, end_date: endDate ?? null,
+      created_by: req.user.id,
+    }).select('id').single();
+    if (error) throw error;
 
     res.status(201).json({
       success: true,
       message: 'Encuesta creada y activada correctamente',
-      data: { surveyId: result.insertId },
+      data: { surveyId: data.id },
     });
   } catch (error) {
     next(error);
@@ -90,10 +82,12 @@ export const updateSurveyStatus = async (req, res, next) => {
     }
 
     if (status === 'active') {
-      await pool.execute(`UPDATE surveys SET status = 'closed' WHERE status = 'active' AND id != ?`, [id]);
+      await supabase.from('surveys').update({ status: 'closed' }).eq('status', 'active').neq('id', id);
     }
 
-    await pool.execute('UPDATE surveys SET status = ? WHERE id = ?', [status, id]);
+    const { error } = await supabase.from('surveys').update({ status }).eq('id', id);
+    if (error) throw error;
+
     res.json({ success: true, message: `Encuesta actualizada a estado: ${status}` });
   } catch (error) {
     next(error);
@@ -120,10 +114,9 @@ export const createResponse = async (req, res, next) => {
       return next(err);
     }
 
-    // Verificar que la encuesta exista y esté activa
-    const [surveyRows] = await pool.execute(
-      `SELECT id FROM surveys WHERE id = ? AND status = 'active'`, [surveyId]
-    );
+    const { data: surveyRows, error: surveyError } = await supabase
+      .from('surveys').select('id').eq('id', surveyId).eq('status', 'active');
+    if (surveyError) throw surveyError;
     if (!surveyRows.length) {
       const err = new Error('La encuesta no existe o no está activa');
       err.status = 404;
@@ -134,26 +127,18 @@ export const createResponse = async (req, res, next) => {
       valuedComment, improvementComment
     );
 
-    const likertJson = JSON.stringify(likertScores ?? {});
-
-    const [result] = await pool.execute(
-      `INSERT INTO enps_responses
-         (survey_id, area_id, position, seniority_years, enps_score,
-          likert_scores, valued_comment, ai_valued_category,
-          improvement_comment, ai_improvement_category)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        surveyId, area_id, position, seniorityYears, enpsScore,
-        likertJson,
-        valuedComment ?? null, valuedCategory ?? null,
-        improvementComment ?? null, improvementCategory ?? null,
-      ]
-    );
+    const { data, error } = await supabase.from('enps_responses').insert({
+      survey_id: surveyId, area_id, position, seniority_years: seniorityYears, enps_score: enpsScore,
+      likert_scores: likertScores ?? {},
+      valued_comment: valuedComment ?? null, ai_valued_category: valuedCategory ?? null,
+      improvement_comment: improvementComment ?? null, ai_improvement_category: improvementCategory ?? null,
+    }).select('id').single();
+    if (error) throw error;
 
     res.status(201).json({
       success: true,
       message: 'Respuesta eNPS registrada de forma anónima',
-      data: { responseId: result.insertId, aiCategories: { valuedCategory, improvementCategory } },
+      data: { responseId: data.id, aiCategories: { valuedCategory, improvementCategory } },
     });
   } catch (error) {
     next(error);
@@ -170,18 +155,12 @@ export const getExecutiveSummary = async (req, res, next) => {
       return next(err);
     }
 
-    const [statsRows] = await pool.execute(
-      `SELECT COUNT(*)                        AS total,
-              ROUND(AVG(enps_score), 2)       AS avgEnps,
-              SUM(enps_score >= 9)            AS promoters,
-              SUM(enps_score BETWEEN 7 AND 8) AS passives,
-              SUM(enps_score <= 6)            AS detractors
-       FROM enps_responses WHERE survey_id = ?`,
-      [surveyId]
-    );
+    const { data: statsRows, error: statsError } = await supabase
+      .rpc('enps_executive_stats', { p_survey_id: surveyId });
+    if (statsError) throw statsError;
 
     const s = statsRows[0];
-    if (!s.total) {
+    if (!s || !s.total) {
       return res.json({ success: true, data: { surveyId, message: 'No hay respuestas.', stats: null, aiSummary: null } });
     }
 
@@ -191,30 +170,25 @@ export const getExecutiveSummary = async (req, res, next) => {
     const detractors = Number(s.detractors) || 0;
     const enpsScore  = Math.round(((promoters - detractors) / total) * 100);
 
-    const [categoryStats] = await pool.execute(
-      `SELECT ai_valued_category, ai_improvement_category, COUNT(*) AS count
-       FROM   enps_responses
-       WHERE  survey_id = ? AND (ai_valued_category IS NOT NULL OR ai_improvement_category IS NOT NULL)
-       GROUP  BY ai_valued_category, ai_improvement_category`,
-      [surveyId]
-    );
+    const { data: categoryStats, error: catError } = await supabase
+      .rpc('enps_category_distribution', { p_survey_id: surveyId });
+    if (catError) throw catError;
 
-    const [commentRows] = await pool.execute(
-      `SELECT valued_comment AS valued, improvement_comment AS improvement
-       FROM   enps_responses
-       WHERE  survey_id = ? AND (valued_comment IS NOT NULL OR improvement_comment IS NOT NULL)
-       LIMIT  50`,
-      [surveyId]
-    );
+    const { data: commentRows, error: commentError } = await supabase
+      .from('enps_responses')
+      .select('valued_comment, improvement_comment')
+      .eq('survey_id', surveyId)
+      .or('valued_comment.not.is.null,improvement_comment.not.is.null')
+      .limit(50);
+    if (commentError) throw commentError;
 
-    const [likertRows] = await pool.execute(
-      `SELECT likert_scores FROM enps_responses WHERE survey_id = ?`, [surveyId]
-    );
+    const { data: likertRows, error: likertError } = await supabase
+      .from('enps_responses').select('likert_scores').eq('survey_id', surveyId);
+    if (likertError) throw likertError;
 
     let likertSum = 0, likertCount = 0;
     likertRows.forEach(({ likert_scores }) => {
-      const scores = Array.isArray(likert_scores) ? likert_scores : JSON.parse(likert_scores ?? '{}');
-      Object.values(scores).forEach((v) => { if (typeof v === 'number') { likertSum += v; likertCount++; } });
+      Object.values(likert_scores ?? {}).forEach((v) => { if (typeof v === 'number') { likertSum += v; likertCount++; } });
     });
 
     const surveyStats = {
@@ -225,7 +199,10 @@ export const getExecutiveSummary = async (req, res, next) => {
       avgLikert:     likertCount > 0 ? (likertSum / likertCount).toFixed(2) : 'N/A',
     };
 
-    const aiSummary = await generateENPSExecutiveSummary(surveyStats, commentRows);
+    const aiSummary = await generateENPSExecutiveSummary(
+      surveyStats,
+      commentRows.map((c) => ({ valued: c.valued_comment, improvement: c.improvement_comment }))
+    );
 
     res.json({ success: true, data: { surveyId, stats: surveyStats, categoryDistribution: categoryStats, aiSummary } });
   } catch (error) {
@@ -238,22 +215,17 @@ export const getLikertBreakdown = async (req, res, next) => {
   try {
     const surveyId = Number(req.params.surveyId);
 
-    const [rows] = await pool.execute(
-      'SELECT likert_scores FROM enps_responses WHERE survey_id = ?',
-      [surveyId]
-    );
+    const { data: rows, error } = await supabase
+      .from('enps_responses').select('likert_scores').eq('survey_id', surveyId);
+    if (error) throw error;
 
     if (!rows.length) {
       return res.json({ success: true, data: [] });
     }
 
-    // Agregar totales por dimensión en JS (JSON flexible)
     const totals = {}, counts = {};
     rows.forEach(({ likert_scores }) => {
-      const s = Array.isArray(likert_scores) ? likert_scores
-              : typeof likert_scores === 'string' ? JSON.parse(likert_scores)
-              : likert_scores;
-      Object.entries(s ?? {}).forEach(([k, v]) => {
+      Object.entries(likert_scores ?? {}).forEach(([k, v]) => {
         if (typeof v === 'number') {
           totals[k] = (totals[k] ?? 0) + v;
           counts[k] = (counts[k] ?? 0) + 1;
@@ -289,30 +261,21 @@ export const exportToExcel = async (req, res, next) => {
   try {
     const surveyId = Number(req.params.surveyId);
 
-    const [surveyRows] = await pool.execute('SELECT title, period FROM surveys WHERE id = ?', [surveyId]);
-    const survey = surveyRows[0] ?? { title: `Encuesta ${surveyId}`, period: '' };
+    const { data: surveyRows } = await supabase.from('surveys').select('title, period').eq('id', surveyId);
+    const survey = surveyRows?.[0] ?? { title: `Encuesta ${surveyId}`, period: '' };
 
-    const [responses] = await pool.execute(
-      `SELECT r.area_id, a.name AS area_name, r.position, r.seniority_years,
-              r.enps_score, r.likert_scores,
-              r.valued_comment, r.improvement_comment,
-              r.ai_valued_category, r.ai_improvement_category,
-              r.created_at
-       FROM   enps_responses r
-       JOIN   areas a ON r.area_id = a.id
-       WHERE  r.survey_id = ?
-       ORDER  BY r.created_at`,
-      [surveyId]
-    );
+    const { data: responses, error } = await supabase
+      .from('enps_responses')
+      .select('area_id, areas(name), position, seniority_years, enps_score, likert_scores, valued_comment, improvement_comment, ai_valued_category, ai_improvement_category, created_at')
+      .eq('survey_id', surveyId)
+      .order('created_at');
+    if (error) throw error;
 
-    // Hoja 1: Respuestas individuales
     const respSheet = responses.map((r, i) => {
-      const likert = Array.isArray(r.likert_scores) ? r.likert_scores
-                   : typeof r.likert_scores === 'string' ? JSON.parse(r.likert_scores)
-                   : r.likert_scores ?? {};
+      const likert = r.likert_scores ?? {};
       return {
         '#':                    i + 1,
-        'Área':                 r.area_name,
+        'Área':                 r.areas?.name,
         'Puesto':               r.position ?? 'N/A',
         'Antigüedad (años)':    r.seniority_years ?? 'N/A',
         'Score eNPS':           r.enps_score,
@@ -331,7 +294,6 @@ export const exportToExcel = async (req, res, next) => {
       };
     });
 
-    // Hoja 2: Resumen
     const total      = responses.length;
     const promoters  = responses.filter((r) => r.enps_score >= 9).length;
     const passives   = responses.filter((r) => r.enps_score >= 7 && r.enps_score <= 8).length;
@@ -365,49 +327,18 @@ export const exportToExcel = async (req, res, next) => {
 };
 
 // ── GET /api/v1/enps/dashboard/segmented/:surveyId ───────────────────────────
-// eNPS desglosado por área y rango de antigüedad
 export const getSegmentedResults = async (req, res, next) => {
   try {
     const surveyId = Number(req.params.surveyId);
 
-    // Por área
-    const [byArea] = await pool.execute(
-      `SELECT a.name AS segment,
-              COUNT(*)                        AS total,
-              SUM(r.enps_score >= 9)          AS promoters,
-              SUM(r.enps_score BETWEEN 7 AND 8) AS passives,
-              SUM(r.enps_score <= 6)          AS detractors,
-              ROUND(AVG(r.enps_score), 2)     AS avgScore
-       FROM   enps_responses r
-       JOIN   areas a ON r.area_id = a.id
-       WHERE  r.survey_id = ?
-       GROUP  BY a.id, a.name
-       ORDER  BY a.name`,
-      [surveyId]
-    );
+    const { data: byArea, error: areaError } = await supabase
+      .rpc('enps_segmented_by_area', { p_survey_id: surveyId });
+    if (areaError) throw areaError;
 
-    // Por antigüedad (rangos)
-    const [bySeniority] = await pool.execute(
-      `SELECT
-         CASE
-           WHEN seniority_years < 1  THEN 'Menos de 1 año'
-           WHEN seniority_years < 3  THEN '1-3 años'
-           WHEN seniority_years < 5  THEN '3-5 años'
-           ELSE 'Más de 5 años'
-         END                                 AS segment,
-         COUNT(*)                            AS total,
-         SUM(enps_score >= 9)                AS promoters,
-         SUM(enps_score BETWEEN 7 AND 8)     AS passives,
-         SUM(enps_score <= 6)                AS detractors,
-         ROUND(AVG(enps_score), 2)           AS avgScore
-       FROM  enps_responses
-       WHERE survey_id = ? AND seniority_years IS NOT NULL
-       GROUP BY segment
-       ORDER BY MIN(seniority_years)`,
-      [surveyId]
-    );
+    const { data: bySeniority, error: seniorityError } = await supabase
+      .rpc('enps_segmented_by_seniority', { p_survey_id: surveyId });
+    if (seniorityError) throw seniorityError;
 
-    // Calcular eNPS por segmento
     const calcEnps = (row) => {
       const t = Number(row.total) || 1;
       return Math.round(((Number(row.promoters) - Number(row.detractors)) / t) * 100);
@@ -420,7 +351,7 @@ export const getSegmentedResults = async (req, res, next) => {
       promotersPct: Math.round((Number(r.promoters) / Number(r.total)) * 100),
       passivesPct:  Math.round((Number(r.passives)  / Number(r.total)) * 100),
       detractorsPct:Math.round((Number(r.detractors)/ Number(r.total)) * 100),
-      avgScore:     Number(r.avgScore),
+      avgScore:     Number(r.avg_score),
     }));
 
     res.json({ success: true, data: { byArea: format(byArea), bySeniority: format(bySeniority) } });

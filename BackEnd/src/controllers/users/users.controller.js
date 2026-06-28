@@ -1,27 +1,26 @@
-import bcrypt from 'bcryptjs';
-import pool from '../../config/db.js';
-
-const MANAGED_ROLES = ['Jefatura', 'RH', 'Admin'];
+import supabase from '../../config/supabaseClient.js';
 
 // ── GET /api/v1/users/me ──────────────────────────────────────────────────────
 export const getMyProfile = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT u.id, u.name, u.email, u.position, u.hire_date,
-              u.area_id, a.name AS area_name, r.name AS role
-       FROM   users u
-       JOIN   roles r ON u.role_id = r.id
-       JOIN   areas a ON u.area_id = a.id
-       WHERE  u.id = ?`,
-      [req.user.id]
-    );
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, email, position, hire_date, area_id, areas(name), roles(name)')
+      .eq('id', req.user.id)
+      .single();
 
-    if (!rows.length) {
+    if (error || !data) {
       const err = new Error('Usuario no encontrado'); err.status = 404; return next(err);
     }
 
-    const { password_hash, ...profile } = rows[0];
-    res.json({ success: true, data: profile });
+    res.json({
+      success: true,
+      data: {
+        id: data.id, name: data.name, email: data.email,
+        position: data.position, hire_date: data.hire_date,
+        area_id: data.area_id, area_name: data.areas?.name, role: data.roles?.name,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -38,18 +37,20 @@ export const updateMyProfile = async (req, res, next) => {
       return next(err);
     }
 
-    // Verificar que el email no esté en uso por otro usuario
-    const [existing] = await pool.execute(
-      'SELECT id FROM users WHERE email = ? AND id != ?',
-      [email, req.user.id]
-    );
-    if (existing.length) {
+    const { data: existing } = await supabase
+      .from('profiles').select('id').eq('email', email).neq('id', req.user.id);
+    if (existing?.length) {
       const err = new Error('Ese correo ya está registrado por otro usuario');
       err.status = 409;
       return next(err);
     }
 
-    await pool.execute('UPDATE users SET email = ? WHERE id = ?', [email, req.user.id]);
+    const { error: authError } = await supabase.auth.admin.updateUserById(req.user.id, { email });
+    if (authError) throw authError;
+
+    const { error } = await supabase.from('profiles').update({ email }).eq('id', req.user.id);
+    if (error) throw error;
+
     res.json({ success: true, message: 'Perfil actualizado correctamente' });
   } catch (error) {
     next(error);
@@ -57,7 +58,6 @@ export const updateMyProfile = async (req, res, next) => {
 };
 
 // ── GET /api/v1/users/by-area/:areaId ────────────────────────────────────────
-// Solo para Jefatura, RH y Admin — lista colaboradores de un área para el módulo de Reuniones 1:1
 export const getUsersByArea = async (req, res, next) => {
   try {
     const areaId = Number(req.params.areaId);
@@ -67,16 +67,14 @@ export const getUsersByArea = async (req, res, next) => {
       return next(err);
     }
 
-    const [rows] = await pool.execute(
-      `SELECT u.id, u.name, u.position, r.name AS role
-       FROM   users u
-       JOIN   roles r ON u.role_id = r.id
-       WHERE  u.area_id = ?
-       ORDER  BY u.name`,
-      [areaId]
-    );
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, position, roles(name)')
+      .eq('area_id', areaId)
+      .order('name');
+    if (error) throw error;
 
-    res.json({ success: true, data: rows });
+    res.json({ success: true, data: data.map((u) => ({ id: u.id, name: u.name, position: u.position, role: u.roles?.name })) });
   } catch (error) {
     next(error);
   }
@@ -85,15 +83,20 @@ export const getUsersByArea = async (req, res, next) => {
 // ── GET /api/v1/users (Admin) ─────────────────────────────────────────────────
 export const getAllUsers = async (req, res, next) => {
   try {
-    const [rows] = await pool.execute(
-      `SELECT u.id, u.name, u.email, u.position, u.hire_date,
-              r.id AS role_id, r.name AS role, a.id AS area_id, a.name AS area_name
-       FROM   users u
-       JOIN   roles r ON u.role_id = r.id
-       JOIN   areas a ON u.area_id = a.id
-       ORDER  BY u.name`
-    );
-    res.json({ success: true, data: rows });
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, email, position, hire_date, role_id, roles(id, name), area_id, areas(id, name)')
+      .order('name');
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: data.map((u) => ({
+        id: u.id, name: u.name, email: u.email, position: u.position, hire_date: u.hire_date,
+        role_id: u.roles?.id, role: u.roles?.name,
+        area_id: u.areas?.id, area_name: u.areas?.name,
+      })),
+    });
   } catch (error) {
     next(error);
   }
@@ -116,21 +119,27 @@ export const createUser = async (req, res, next) => {
       return next(err);
     }
 
-    const [existing] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length) {
+    const { data: existing } = await supabase.from('profiles').select('id').eq('email', email);
+    if (existing?.length) {
       const err = new Error('Ese correo ya está registrado');
       err.status = 409;
       return next(err);
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
-    const [result] = await pool.execute(
-      `INSERT INTO users (name, email, password_hash, position, hire_date, role_id, area_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name, email, password_hash, position, hire_date, role_id, area_id]
-    );
+    const { data: created, error: authError } = await supabase.auth.admin.createUser({
+      email, password, email_confirm: true,
+    });
+    if (authError) throw authError;
 
-    res.status(201).json({ success: true, message: 'Usuario creado correctamente', data: { id: result.insertId } });
+    const { error: profileError } = await supabase.from('profiles').insert({
+      id: created.user.id, name, email, position, hire_date, role_id, area_id,
+    });
+    if (profileError) {
+      await supabase.auth.admin.deleteUser(created.user.id);
+      throw profileError;
+    }
+
+    res.status(201).json({ success: true, message: 'Usuario creado correctamente', data: { id: created.user.id } });
   } catch (error) {
     next(error);
   }
@@ -139,7 +148,7 @@ export const createUser = async (req, res, next) => {
 // ── PUT /api/v1/users/:id/role (Admin) ────────────────────────────────────────
 export const updateUserRole = async (req, res, next) => {
   try {
-    const userId = Number(req.params.id);
+    const userId = req.params.id;
     const { role_id } = req.body;
 
     if (!role_id) {
@@ -149,12 +158,15 @@ export const updateUserRole = async (req, res, next) => {
       const err = new Error('No puedes cambiar tu propio rol'); err.status = 403; return next(err);
     }
 
-    const [rows] = await pool.execute('SELECT id FROM users WHERE id = ?', [userId]);
+    const { data: rows, error: findError } = await supabase.from('profiles').select('id').eq('id', userId);
+    if (findError) throw findError;
     if (!rows.length) {
       const err = new Error('Usuario no encontrado'); err.status = 404; return next(err);
     }
 
-    await pool.execute('UPDATE users SET role_id = ? WHERE id = ?', [role_id, userId]);
+    const { error } = await supabase.from('profiles').update({ role_id }).eq('id', userId);
+    if (error) throw error;
+
     res.json({ success: true, message: 'Rol actualizado correctamente' });
   } catch (error) {
     next(error);
@@ -164,18 +176,21 @@ export const updateUserRole = async (req, res, next) => {
 // ── DELETE /api/v1/users/:id (Admin) ─────────────────────────────────────────
 export const deleteUser = async (req, res, next) => {
   try {
-    const userId = Number(req.params.id);
+    const userId = req.params.id;
 
     if (userId === req.user.id) {
       const err = new Error('No puedes eliminar tu propia cuenta'); err.status = 403; return next(err);
     }
 
-    const [rows] = await pool.execute('SELECT id FROM users WHERE id = ?', [userId]);
+    const { data: rows, error: findError } = await supabase.from('profiles').select('id').eq('id', userId);
+    if (findError) throw findError;
     if (!rows.length) {
       const err = new Error('Usuario no encontrado'); err.status = 404; return next(err);
     }
 
-    await pool.execute('DELETE FROM users WHERE id = ?', [userId]);
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) throw error;
+
     res.json({ success: true, message: 'Usuario eliminado correctamente' });
   } catch (error) {
     next(error);

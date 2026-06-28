@@ -1,19 +1,17 @@
-import pool from '../../config/db.js';
+import supabase from '../../config/supabaseClient.js';
 import { prepare1on1Meeting } from '../../services/iaService.js';
 
 const MANAGER_ROLES = ['Jefatura', 'RH', 'Admin'];
 
 // ── GET /api/v1/performance/goals/:userId ─────────────────────────────────────
-// Cualquier usuario puede ver sus propias metas.
-// Jefatura/RH/Admin pueden ver las de cualquier usuario.
 export const getGoalsByUser = async (req, res, next) => {
   try {
-    const userId      = Number(req.params.userId);
-    const requesterId = req.user.id;
+    const userId        = req.params.userId;
+    const requesterId   = req.user.id;
     const requesterRole = req.user.role;
 
-    if (!userId || isNaN(userId)) {
-      const err = new Error('userId debe ser un número válido');
+    if (!userId) {
+      const err = new Error('userId debe ser un identificador válido');
       err.status = 400;
       return next(err);
     }
@@ -24,15 +22,18 @@ export const getGoalsByUser = async (req, res, next) => {
       return next(err);
     }
 
-    const [goals] = await pool.execute(
-      `SELECT id AS goalId, user_id AS userId, type, title, description,
-              target_value AS targetValue, current_value AS currentValue,
-              unit, due_date AS dueDate, status, created_at AS createdAt
-       FROM   goals
-       WHERE  user_id = ?
-       ORDER  BY created_at DESC`,
-      [userId]
-    );
+    const { data, error } = await supabase
+      .from('goals')
+      .select('id, user_id, type, title, description, target_value, current_value, unit, due_date, status, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const goals = data.map((g) => ({
+      goalId: g.id, userId: g.user_id, type: g.type, title: g.title, description: g.description,
+      targetValue: g.target_value, currentValue: g.current_value, unit: g.unit,
+      dueDate: g.due_date, status: g.status, createdAt: g.created_at,
+    }));
 
     res.json({ success: true, data: { userId, totalGoals: goals.length, goals } });
   } catch (error) {
@@ -50,27 +51,24 @@ export const createGoal = async (req, res, next) => {
       err.status = 400;
       return next(err);
     }
-    if (!['OKR', 'KPI'].includes(type)) {
-      const err = new Error('type debe ser OKR o KPI');
+    if (!['OKR', 'KPI', 'MCI'].includes(type)) {
+      const err = new Error('type debe ser OKR, KPI o MCI');
       err.status = 422;
       return next(err);
     }
 
-    const [result] = await pool.execute(
-      `INSERT INTO goals (user_id, type, title, description, target_value, current_value, unit, due_date, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId, type, title,
-        description  ?? null,
-        targetValue  ?? null,
-        currentValue ?? 0,
-        unit         ?? null,
-        dueDate      ?? null,
-        status       ?? 'PENDIENTE',
-      ]
-    );
+    const { data, error } = await supabase.from('goals').insert({
+      user_id: userId, type, title,
+      description:   description  ?? null,
+      target_value:  targetValue  ?? null,
+      current_value: currentValue ?? 0,
+      unit:          unit         ?? null,
+      due_date:      dueDate      ?? null,
+      status:        status       ?? 'PENDIENTE',
+    }).select('id').single();
+    if (error) throw error;
 
-    res.status(201).json({ success: true, message: 'Meta creada correctamente', data: { goalId: result.insertId } });
+    res.status(201).json({ success: true, message: 'Meta creada correctamente', data: { goalId: data.id } });
   } catch (error) {
     next(error);
   }
@@ -88,22 +86,22 @@ export const updateGoal = async (req, res, next) => {
       return next(err);
     }
 
-    const [existing] = await pool.execute('SELECT id FROM goals WHERE id = ?', [goalId]);
+    const { data: existing, error: findError } = await supabase.from('goals').select('id').eq('id', goalId);
+    if (findError) throw findError;
     if (!existing.length) {
       const err = new Error('Meta no encontrada'); err.status = 404; return next(err);
     }
 
-    await pool.execute(
-      `UPDATE goals SET
-         current_value = COALESCE(?, current_value),
-         status        = COALESCE(?, status),
-         title         = COALESCE(?, title),
-         description   = COALESCE(?, description),
-         target_value  = COALESCE(?, target_value),
-         due_date      = COALESCE(?, due_date)
-       WHERE id = ?`,
-      [currentValue ?? null, status ?? null, title ?? null, description ?? null, targetValue ?? null, dueDate ?? null, goalId]
-    );
+    const patch = {};
+    if (currentValue !== undefined) patch.current_value = currentValue;
+    if (status       !== undefined) patch.status        = status;
+    if (title         !== undefined) patch.title         = title;
+    if (description   !== undefined) patch.description   = description;
+    if (targetValue   !== undefined) patch.target_value  = targetValue;
+    if (dueDate        !== undefined) patch.due_date      = dueDate;
+
+    const { error } = await supabase.from('goals').update(patch).eq('id', goalId);
+    if (error) throw error;
 
     res.json({ success: true, message: 'Meta actualizada correctamente' });
   } catch (error) {
@@ -120,26 +118,30 @@ export const get1on1Prep = async (req, res, next) => {
       const err = new Error('userId es requerido'); err.status = 400; return next(err);
     }
 
-    const [goals] = await pool.execute(
-      `SELECT type, title, description, target_value AS targetValue,
-              current_value AS currentValue, unit, due_date AS dueDate, status
-       FROM   goals WHERE user_id = ? ORDER BY created_at DESC`,
-      [userId]
-    );
+    const { data: goals, error: goalsError } = await supabase
+      .from('goals')
+      .select('type, title, description, target_value, current_value, unit, due_date, status')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (goalsError) throw goalsError;
 
-    const [userRows] = await pool.execute(
-      'SELECT name, position FROM users WHERE id = ?', [userId]
-    );
+    const mappedGoals = goals.map((g) => ({
+      type: g.type, title: g.title, description: g.description,
+      targetValue: g.target_value, currentValue: g.current_value, unit: g.unit,
+      dueDate: g.due_date, status: g.status,
+    }));
 
-    if (!userRows.length) {
+    const { data: userRow, error: userError } = await supabase
+      .from('profiles').select('name, position').eq('id', userId).single();
+    if (userError || !userRow) {
       const err = new Error('Usuario no encontrado'); err.status = 404; return next(err);
     }
 
-    const agenda = await prepare1on1Meeting(goals, pastCommitments ?? []);
+    const agenda = await prepare1on1Meeting(mappedGoals, pastCommitments ?? []);
 
     res.json({
       success: true,
-      data: { employee: userRows[0], goalsProgress: goals, agenda },
+      data: { employee: userRow, goalsProgress: mappedGoals, agenda },
     });
   } catch (error) {
     next(error);

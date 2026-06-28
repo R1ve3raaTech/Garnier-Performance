@@ -3,21 +3,14 @@ import api from '../services/api';
 
 const AuthContext = createContext(null);
 
-const decodeToken = (token) => {
-  try {
-    return JSON.parse(atob(token.split('.')[1]));
-  } catch {
-    return null;
-  }
-};
-
 const loadFromStorage = () => {
   try {
-    const token = localStorage.getItem('token');
-    const user  = JSON.parse(localStorage.getItem('user') ?? 'null');
-    return token && user ? { token, user } : { token: null, user: null };
+    const token        = localStorage.getItem('token');
+    const refreshToken = localStorage.getItem('refreshToken');
+    const user          = JSON.parse(localStorage.getItem('user') ?? 'null');
+    return token && user ? { token, refreshToken, user } : { token: null, refreshToken: null, user: null };
   } catch {
-    return { token: null, user: null };
+    return { token: null, refreshToken: null, user: null };
   }
 };
 
@@ -28,9 +21,10 @@ export const AuthProvider = ({ children }) => {
 
   const login = useCallback(async (credentials) => {
     const { data } = await api.post('/auth/login', credentials);
-    const { token: newToken, user: userData } = data.data;
+    const { token: newToken, refreshToken, user: userData } = data.data;
 
     localStorage.setItem('token', newToken);
+    localStorage.setItem('refreshToken', refreshToken);
     localStorage.setItem('user', JSON.stringify(userData));
 
     setToken(newToken);
@@ -41,6 +35,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = useCallback(() => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
     setToken(null);
     setUser(null);

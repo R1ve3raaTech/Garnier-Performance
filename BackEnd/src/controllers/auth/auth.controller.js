@@ -1,6 +1,4 @@
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import pool from '../../config/db.js';
+import supabase, { supabaseAuth } from '../../config/supabaseClient.js';
 
 export const login = async (req, res, next) => {
   try {
@@ -12,61 +10,39 @@ export const login = async (req, res, next) => {
       return next(err);
     }
 
-    const [rows] = await pool.execute(
-      `SELECT u.id, u.name, u.email, u.password_hash,
-              u.area_id, u.position, u.hire_date,
-              r.name AS role,
-              a.name AS area_name
-       FROM   users u
-       JOIN   roles r ON u.role_id = r.id
-       JOIN   areas a ON u.area_id = a.id
-       WHERE  u.email = ?
-       LIMIT  1`,
-      [email]
-    );
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
 
-    if (rows.length === 0) {
+    if (error || !data.session) {
       const err = new Error('Credenciales inválidas');
       err.status = 401;
       return next(err);
     }
 
-    const user = rows[0];
-    const passwordValid = await bcrypt.compare(password, user.password_hash);
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, name, email, area_id, areas(name), roles(name)')
+      .eq('id', data.user.id)
+      .single();
 
-    if (!passwordValid) {
-      const err = new Error('Credenciales inválidas');
+    if (profileError || !profile) {
+      const err = new Error('Perfil de usuario no encontrado');
       err.status = 401;
       return next(err);
     }
-
-    const payload = {
-      id:        user.id,
-      name:      user.name,
-      email:     user.email,
-      role:      user.role,
-      area_id:   user.area_id,
-      area_name: user.area_name,
-      position:  user.position,
-      hire_date: user.hire_date,
-    };
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
-    });
 
     res.status(200).json({
       success: true,
       message: 'Login exitoso',
       data: {
-        token,
+        token: data.session.access_token,
+        refreshToken: data.session.refresh_token,
         user: {
-          id:        user.id,
-          name:      user.name,
-          email:     user.email,
-          role:      user.role,
-          area_id:   user.area_id,
-          area_name: user.area_name,
+          id:        profile.id,
+          name:      profile.name,
+          email:     profile.email,
+          role:      profile.roles?.name,
+          area_id:   profile.area_id,
+          area_name: profile.areas?.name,
         },
       },
     });
@@ -79,6 +55,7 @@ export const changePassword = async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user.id;
+    const email  = req.user.email;
 
     if (!currentPassword || !newPassword) {
       const err = new Error('currentPassword y newPassword son requeridos');
@@ -92,23 +69,23 @@ export const changePassword = async (req, res, next) => {
       return next(err);
     }
 
-    const [rows] = await pool.execute(
-      'SELECT password_hash FROM users WHERE id = ?', [userId]
-    );
-
-    if (!rows.length) {
-      const err = new Error('Usuario no encontrado'); err.status = 404; return next(err);
-    }
-
-    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
-    if (!valid) {
+    const { error: verifyError } = await supabaseAuth.auth.signInWithPassword({
+      email, password: currentPassword,
+    });
+    if (verifyError) {
       const err = new Error('La contraseña actual es incorrecta');
       err.status = 401;
       return next(err);
     }
 
-    const hash = await bcrypt.hash(newPassword, 10);
-    await pool.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
+    const { error: updateError } = await supabase.auth.admin.updateUserById(userId, {
+      password: newPassword,
+    });
+    if (updateError) {
+      const err = new Error('No se pudo actualizar la contraseña');
+      err.status = 500;
+      return next(err);
+    }
 
     res.json({ success: true, message: 'Contraseña actualizada correctamente' });
   } catch (error) {

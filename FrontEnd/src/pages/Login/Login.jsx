@@ -10,6 +10,7 @@ const Login = () => {
   const navigate  = useNavigate();
   const [form,    setForm]    = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleChange = (e) => setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
@@ -89,12 +90,20 @@ const Login = () => {
               <div className="relative">
                 <i className="fi fi-rr-lock absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm leading-none" />
                 <input
-                  id="password" name="password" type="password"
+                  id="password" name="password" type={showPassword ? 'text' : 'password'}
                   autoComplete="off" required
                   value={form.password} onChange={handleChange}
                   placeholder="••••••••"
-                  className="input pl-9"
+                  className="input pl-9 pr-9"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm leading-none"
+                >
+                  <i className={showPassword ? 'fi fi-rr-eye-crossed' : 'fi fi-rr-eye'} />
+                </button>
               </div>
             </div>
 
