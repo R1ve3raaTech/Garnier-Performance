@@ -18,7 +18,7 @@ const Login = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(form);
+      await login({ ...form, email: form.email.trim().toLowerCase() });
       navigate('/');
     } catch (err) {
       const msg = err.response?.data?.error?.message ?? 'Credenciales incorrectas';
@@ -28,7 +28,7 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-garnier-900 px-4 overflow-hidden">
+    <div className="relative h-screen flex items-center justify-center bg-garnier-900 px-4 overflow-hidden">
 
       {/* Burbujas decorativas */}
       <motion.div
@@ -77,7 +77,7 @@ const Login = () => {
                 <i className="fi fi-rr-envelope absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm leading-none" />
                 <input
                   id="email" name="email" type="email"
-                  autoComplete="email" required
+                  autoComplete="email" autoFocus required
                   value={form.email} onChange={handleChange}
                   placeholder="usuario@garnier.com"
                   className="input pl-9"
@@ -106,6 +106,10 @@ const Login = () => {
                 </button>
               </div>
             </div>
+
+            <p className="text-xs text-gray-400 -mt-1">
+              ¿No puedes ingresar? Contacta a tu equipo de RH para restablecer tu acceso.
+            </p>
 
             <motion.button
               type="submit"
