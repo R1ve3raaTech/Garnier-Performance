@@ -1,22 +1,7 @@
-import path    from 'path';
-import fs      from 'fs';
-import { fileURLToPath } from 'url';
 import multer  from 'multer';
 import supabase from '../../config/supabaseClient.js';
 
-const __dirname  = path.dirname(fileURLToPath(import.meta.url));
-const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
-
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// ── Configuración de Multer ───────────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename:    (req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
-});
+const BUCKET = 'rag-documents';
 
 const fileFilter = (req, file, cb) => {
   const allowed = [
@@ -29,7 +14,7 @@ const fileFilter = (req, file, cb) => {
 };
 
 export const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
@@ -61,13 +46,23 @@ export const uploadDocument = async (req, res, next) => {
       return next(err);
     }
 
-    const { originalname, filename, size, mimetype } = req.file;
+    const { originalname, buffer, size, mimetype } = req.file;
+    const ext      = originalname.includes('.') ? originalname.slice(originalname.lastIndexOf('.')) : '';
+    const filename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(filename, buffer, { contentType: mimetype, upsert: false });
+    if (uploadError) throw uploadError;
 
     const { data, error } = await supabase.from('rag_documents').insert({
       original_name: originalname, filename, file_size: size, mime_type: mimetype,
       status: 'processing', uploaded_by: req.user.id,
     }).select('id').single();
-    if (error) throw error;
+    if (error) {
+      await supabase.storage.from(BUCKET).remove([filename]);
+      throw error;
+    }
 
     const docId = data.id;
 
@@ -102,8 +97,8 @@ export const deleteDocument = async (req, res, next) => {
       const err = new Error('Documento no encontrado'); err.status = 404; return next(err);
     }
 
-    const filePath = path.join(UPLOAD_DIR, rows[0].filename);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const { error: storageError } = await supabase.storage.from(BUCKET).remove([rows[0].filename]);
+    if (storageError) throw storageError;
 
     const { error } = await supabase.from('rag_documents').delete().eq('id', id);
     if (error) throw error;
