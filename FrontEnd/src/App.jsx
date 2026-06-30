@@ -4,6 +4,8 @@ import ProtectedRoute  from './components/ProtectedRoute';
 import Layout          from './components/Layout';
 
 import Login          from './pages/Login/Login';
+import Register       from './pages/Register/Register';
+import SetPassword    from './pages/SetPassword/SetPassword';
 import Unauthorized   from './pages/Unauthorized/Unauthorized';
 import Dashboard      from './pages/Dashboard/Dashboard';
 import HRAssistant    from './pages/HRAssistant/HRAssistant';
@@ -20,6 +22,7 @@ import SurveyManagement from './pages/SurveyManagement/SurveyManagement';
 import Escalations      from './pages/Escalations/Escalations';
 import Profile          from './pages/Profile/Profile';
 import UserManagement  from './pages/UserManagement/UserManagement';
+import SignupRequests  from './pages/SignupRequests/SignupRequests';
 
 const App = () => (
   <BrowserRouter>
@@ -27,6 +30,8 @@ const App = () => (
       <Routes>
         {/* Rutas públicas */}
         <Route path="/login"        element={<Login />} />
+        <Route path="/register"     element={<Register />} />
+        <Route path="/set-password" element={<SetPassword />} />
         <Route path="/unauthorized" element={<Unauthorized />} />
 
         {/* Rutas protegidas — cualquier usuario autenticado */}
@@ -57,7 +62,8 @@ const App = () => (
 
             {/* Solo Admin */}
             <Route element={<ProtectedRoute allowedRoles={['Admin']} />}>
-              <Route path="user-management" element={<UserManagement />} />
+              <Route path="user-management"  element={<UserManagement />} />
+              <Route path="signup-requests"  element={<SignupRequests />} />
             </Route>
           </Route>
         </Route>

@@ -27,7 +27,8 @@ const NAV_RH = [
 ];
 
 const NAV_ADMIN = [
-  { path: '/user-management', label: 'Usuarios', icon: 'fi-rr-users-alt' },
+  { path: '/user-management', label: 'Usuarios',              icon: 'fi-rr-users-alt'  },
+  { path: '/signup-requests', label: 'Solicitudes de Registro', icon: 'fi-rr-user-add' },
 ];
 
 const ROLE_BADGE = {

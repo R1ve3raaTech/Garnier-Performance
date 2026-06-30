@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { showError } from '../../utils/alerts';
@@ -126,7 +126,12 @@ const Login = () => {
           </form>
         </motion.div>
 
-        <p className="text-center text-gray-500 text-xs mt-6">
+        <p className="text-center text-gray-400 text-sm mt-6">
+          ¿Eres nuevo en Garnier?{' '}
+          <Link to="/register" className="text-brand-400 hover:text-brand-300 font-medium">Crea tu cuenta</Link>
+        </p>
+
+        <p className="text-center text-gray-500 text-xs mt-3">
           © {new Date().getFullYear()} Garnier & Garnier — Acceso restringido a colaboradores
         </p>
       </motion.div>
