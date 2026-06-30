@@ -64,7 +64,7 @@ app.get('/', (req, res) => {
 
 // ── Rutas ─────────────────────────────────────────────────────────────────────
 app.use('/api/v1/auth',         authLimiter, authRoutes);   // rate limit estricto en auth
-app.use('/api/v1/signup',       authLimiter, signupRoutes); // mismo limiter — endpoint público sensible a spam
+app.use('/api/v1/signup',       signupRoutes);               // limiter estricto solo en POST / (ver signup.routes.js)
 app.use('/api/v1/hr-assistant', hrAssistantRoutes);
 app.use('/api/v1/pulse-work',   pulseWorkRoutes);
 app.use('/api/v1/enps',         enpsRoutes);
