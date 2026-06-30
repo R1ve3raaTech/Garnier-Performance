@@ -2,20 +2,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Swal from 'sweetalert2';
 import api from '../../services/api';
-
-const ROLES = [
-  { id: 1, name: 'Funcionario' },
-  { id: 2, name: 'Jefatura' },
-  { id: 3, name: 'RH' },
-  { id: 4, name: 'Admin' },
-];
-
-const ROLE_BADGE = {
-  Funcionario: 'bg-blue-100 text-blue-700',
-  Jefatura:    'bg-amber-100 text-amber-700',
-  RH:          'bg-green-100 text-green-700',
-  Admin:       'bg-garnier-800 text-white',
-};
+import { ROLES, ROLE_BADGE } from '../../constants/roles';
 
 const PAGE_SIZE = 10;
 

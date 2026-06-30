@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import gsap from 'gsap';
 import { useAuth } from '../context/AuthContext';
+import { ROLE_BADGE } from '../constants/roles';
 import logo from '../images/LogoGarnier.png';
 
 const NAV_GENERAL = [
@@ -30,13 +31,6 @@ const NAV_ADMIN = [
   { path: '/user-management', label: 'Usuarios',              icon: 'fi-rr-users-alt'  },
   { path: '/signup-requests', label: 'Solicitudes de Registro', icon: 'fi-rr-user-add' },
 ];
-
-const ROLE_BADGE = {
-  Funcionario: 'bg-brand-100  text-brand-700',
-  Jefatura:    'bg-brand-200  text-brand-800',
-  RH:          'bg-brand-500  text-white',
-  Admin:       'bg-garnier-800 text-white',
-};
 
 const isActivePath = (pathname, path) =>
   path === '/' ? pathname === '/' : pathname.startsWith(path);

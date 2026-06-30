@@ -2,13 +2,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../services/api';
 import { showError, showSuccess, showConfirm } from '../../utils/alerts';
-
-const ROLES = [
-  { id: 1, name: 'Funcionario' },
-  { id: 2, name: 'Jefatura' },
-  { id: 3, name: 'RH' },
-  { id: 4, name: 'Admin' },
-];
+import { ROLES } from '../../constants/roles';
 
 const TABS = [
   { key: 'pending',  label: 'Pendientes' },
@@ -39,7 +33,10 @@ const SignupRequests = () => {
   };
 
   useEffect(() => { fetchRequests(tab); }, [tab]);
-  useEffect(() => { api.get('/areas').then(({ data }) => setAreas(data.data ?? [])).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/areas').then(({ data }) => setAreas(data.data ?? []))
+      .catch(() => showError('Error', 'No se pudieron cargar las áreas. Recarga la página para poder aprobar solicitudes.'));
+  }, []);
 
   const getDecision = (id) => decisions[id] ?? emptyDecision;
   const setDecision = (id, patch) => setDecisions((prev) => ({ ...prev, [id]: { ...getDecision(id), ...patch } }));
@@ -55,8 +52,8 @@ const SignupRequests = () => {
       return;
     }
 
-    const roleName = ROLES.find((r) => r.id === Number(decision.roleId))?.name;
-    const areaName = areas.find((a) => a.id === Number(decision.areaId))?.name;
+    const roleName = ROLES.find((r) => r.id === Number(decision.roleId))?.name ?? 'rol desconocido';
+    const areaName = areas.find((a) => a.id === Number(decision.areaId))?.name ?? 'área desconocida';
     const result = await showConfirm(
       `¿Aprobar a ${req.name}?`,
       `Quedará como "${roleName}" en el área de "${areaName}". Se le enviará un correo de invitación a ${req.email}.`
@@ -185,13 +182,17 @@ const SignupRequests = () => {
                         disabled={processingId === req.id}
                         className="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
                       >
-                        <i className="fi fi-rr-check leading-none" /> Aprobar
+                        {processingId === req.id
+                          ? <i className="fi fi-rr-spinner animate-spin leading-none" />
+                          : <i className="fi fi-rr-check leading-none" />}
+                        Aprobar
                       </button>
                       <button
                         onClick={() => handleReject(req)}
                         disabled={processingId === req.id}
-                        className="px-3 py-1.5 border border-gray-200 hover:bg-red-50 hover:border-red-200 hover:text-red-600 disabled:opacity-50 text-gray-600 rounded-lg text-sm font-medium transition-colors"
+                        className="px-3 py-1.5 border border-gray-200 hover:bg-red-50 hover:border-red-200 hover:text-red-600 disabled:opacity-50 text-gray-600 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
                       >
+                        {processingId === req.id && <i className="fi fi-rr-spinner animate-spin leading-none" />}
                         Rechazar
                       </button>
                     </div>

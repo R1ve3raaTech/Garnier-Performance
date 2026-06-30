@@ -91,7 +91,7 @@ const Login = () => {
                 <i className="fi fi-rr-lock absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm leading-none" />
                 <input
                   id="password" name="password" type={showPassword ? 'text' : 'password'}
-                  autoComplete="off" required
+                  autoComplete="current-password" required
                   value={form.password} onChange={handleChange}
                   placeholder="••••••••"
                   className="input pl-9 pr-9"

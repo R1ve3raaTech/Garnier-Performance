@@ -95,34 +95,52 @@ export const approveRequest = async (req, res, next) => {
       return next(err);
     }
 
-    const { data: request, error: findError } = await supabase
-      .from('signup_requests').select('*').eq('id', id).eq('status', 'pending').single();
-    if (findError || !request) {
+    const [{ data: validRole }, { data: validArea }] = await Promise.all([
+      supabase.from('roles').select('id').eq('id', roleId).maybeSingle(),
+      supabase.from('areas').select('id').eq('id', areaId).maybeSingle(),
+    ]);
+    if (!validRole) {
+      const err = new Error('roleId no corresponde a un rol válido'); err.status = 422; return next(err);
+    }
+    if (!validArea) {
+      const err = new Error('areaId no corresponde a un área válida'); err.status = 422; return next(err);
+    }
+
+    // Update atómico condicionado a status='pending': si dos admins aprueban a la vez,
+    // solo uno obtiene una fila de vuelta — el otro recibe "ya fue procesada".
+    const { data: claimed, error: claimError } = await supabase
+      .from('signup_requests')
+      .update({ status: 'approved', role_id: roleId, area_id: areaId, position: position.trim(),
+                 reviewed_by: req.user.id, reviewed_at: new Date().toISOString() })
+      .eq('id', id).eq('status', 'pending')
+      .select('*')
+      .maybeSingle();
+    if (claimError) throw claimError;
+    if (!claimed) {
       const err = new Error('Solicitud no encontrada o ya fue procesada'); err.status = 404; return next(err);
     }
 
-    const { data: invited, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(request.email, {
+    const { data: invited, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(claimed.email, {
       redirectTo: `${FRONTEND_URL}/set-password`,
     });
-    if (inviteError) throw inviteError;
+    if (inviteError) {
+      // Revertir el estado para que la solicitud pueda reintentarse
+      await supabase.from('signup_requests').update({ status: 'pending', reviewed_by: null, reviewed_at: null }).eq('id', id);
+      throw inviteError;
+    }
 
     const { error: profileError } = await supabase.from('profiles').insert({
-      id: invited.user.id, name: request.name, email: request.email,
+      id: invited.user.id, name: claimed.name, email: claimed.email,
       role_id: roleId, area_id: areaId, position: position.trim(),
       hire_date: new Date().toISOString().slice(0, 10),
     });
     if (profileError) {
       await supabase.auth.admin.deleteUser(invited.user.id);
+      await supabase.from('signup_requests').update({ status: 'pending', reviewed_by: null, reviewed_at: null }).eq('id', id);
       throw profileError;
     }
 
-    const { error: updateError } = await supabase.from('signup_requests').update({
-      status: 'approved', role_id: roleId, area_id: areaId, position: position.trim(),
-      reviewed_by: req.user.id, reviewed_at: new Date().toISOString(),
-    }).eq('id', id);
-    if (updateError) throw updateError;
-
-    res.json({ success: true, message: `Solicitud aprobada. Se envió una invitación a ${request.email}.` });
+    res.json({ success: true, message: `Solicitud aprobada. Se envió una invitación a ${claimed.email}.` });
   } catch (error) {
     next(error);
   }
