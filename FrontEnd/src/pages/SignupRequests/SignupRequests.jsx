@@ -16,12 +16,15 @@ const TABS = [
   { key: 'rejected', label: 'Rechazadas' },
 ];
 
+const emptyDecision = { roleId: '1', areaId: '', position: '' };
+
 const SignupRequests = () => {
   const [tab,      setTab]      = useState('pending');
   const [requests, setRequests] = useState([]);
+  const [areas,    setAreas]    = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [roleByRequest, setRoleByRequest] = useState({});
-  const [processingId,  setProcessingId]  = useState(null);
+  const [decisions, setDecisions] = useState({}); // { [requestId]: { roleId, areaId, position } }
+  const [processingId, setProcessingId] = useState(null);
 
   const fetchRequests = async (status) => {
     setLoading(true);
@@ -36,18 +39,37 @@ const SignupRequests = () => {
   };
 
   useEffect(() => { fetchRequests(tab); }, [tab]);
+  useEffect(() => { api.get('/areas').then(({ data }) => setAreas(data.data ?? [])).catch(() => {}); }, []);
+
+  const getDecision = (id) => decisions[id] ?? emptyDecision;
+  const setDecision = (id, patch) => setDecisions((prev) => ({ ...prev, [id]: { ...getDecision(id), ...patch } }));
 
   const handleApprove = async (req) => {
-    const roleId = Number(roleByRequest[req.id] ?? 1);
+    const decision = getDecision(req.id);
+    if (!decision.areaId) {
+      showError('Falta el área', 'Selecciona el área del colaborador antes de aprobar.');
+      return;
+    }
+    if (!decision.position?.trim()) {
+      showError('Falta el puesto', 'Indica el puesto del colaborador antes de aprobar.');
+      return;
+    }
+
+    const roleName = ROLES.find((r) => r.id === Number(decision.roleId))?.name;
+    const areaName = areas.find((a) => a.id === Number(decision.areaId))?.name;
     const result = await showConfirm(
       `¿Aprobar a ${req.name}?`,
-      `Se creará su cuenta como "${ROLES.find((r) => r.id === roleId)?.name}" y se le enviará un correo de invitación a ${req.email}.`
+      `Quedará como "${roleName}" en el área de "${areaName}". Se le enviará un correo de invitación a ${req.email}.`
     );
     if (!result.isConfirmed) return;
 
     setProcessingId(req.id);
     try {
-      await api.put(`/signup/requests/${req.id}/approve`, { roleId });
+      await api.put(`/signup/requests/${req.id}/approve`, {
+        roleId: Number(decision.roleId),
+        areaId: Number(decision.areaId),
+        position: decision.position.trim(),
+      });
       showSuccess('Solicitud aprobada', `Se envió la invitación a ${req.email}.`);
       setRequests((prev) => prev.filter((r) => r.id !== req.id));
     } catch (err) {
@@ -79,7 +101,7 @@ const SignupRequests = () => {
         <div className="w-1 h-7 bg-brand-500 rounded-full" />
         <div>
           <h1 className="text-2xl font-bold text-garnier-800">Solicitudes de Registro</h1>
-          <p className="text-gray-500 text-sm">Revisa y aprueba las cuentas solicitadas por nuevos colaboradores</p>
+          <p className="text-gray-500 text-sm">Revisa, asigna área/puesto/rol y aprueba a los nuevos colaboradores</p>
         </div>
       </div>
 
@@ -108,14 +130,15 @@ const SignupRequests = () => {
       ) : (
         <div className="space-y-3">
           <AnimatePresence>
-            {requests.map((req) => (
-              <motion.div
-                key={req.id}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -20 }}
-                className="card"
-              >
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex items-start gap-3 min-w-0">
+            {requests.map((req) => {
+              const decision = getDecision(req.id);
+              return (
+                <motion.div
+                  key={req.id}
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -20 }}
+                  className="card"
+                >
+                  <div className="flex items-start gap-3 mb-3">
                     <div className="w-10 h-10 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0">
                       <span className="text-white font-bold text-sm">{req.name.charAt(0).toUpperCase()}</span>
                     </div>
@@ -123,7 +146,9 @@ const SignupRequests = () => {
                       <h3 className="font-semibold text-garnier-800">{req.name}</h3>
                       <p className="text-sm text-gray-500 truncate">{req.email}</p>
                       <p className="text-xs text-gray-400 mt-1">
-                        {req.area_name} · {req.position} · {new Date(req.created_at).toLocaleDateString('es-CR')}
+                        Solicitado el {new Date(req.created_at).toLocaleDateString('es-CR')}
+                        {req.area_name && ` · ${req.area_name}`}
+                        {req.position && ` · ${req.position}`}
                       </p>
                       {req.reviewed_by_name && (
                         <p className="text-xs text-gray-400">Revisado por {req.reviewed_by_name}</p>
@@ -132,10 +157,25 @@ const SignupRequests = () => {
                   </div>
 
                   {tab === 'pending' && (
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <select
-                        value={roleByRequest[req.id] ?? 1}
-                        onChange={(e) => setRoleByRequest((prev) => ({ ...prev, [req.id]: e.target.value }))}
+                        value={decision.areaId}
+                        onChange={(e) => setDecision(req.id, { areaId: e.target.value })}
+                        className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      >
+                        <option value="" disabled>Área...</option>
+                        {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Puesto"
+                        value={decision.position}
+                        onChange={(e) => setDecision(req.id, { position: e.target.value })}
+                        className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 w-32 focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      />
+                      <select
+                        value={decision.roleId}
+                        onChange={(e) => setDecision(req.id, { roleId: e.target.value })}
                         className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-400"
                       >
                         {ROLES.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -156,9 +196,9 @@ const SignupRequests = () => {
                       </button>
                     </div>
                   )}
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
         </div>
       )}

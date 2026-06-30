@@ -4,12 +4,13 @@ const FRONTEND_URL = process.env.FRONTEND_URL ?? (process.env.ALLOWED_ORIGINS ??
 
 // ── POST /api/v1/signup ───────────────────────────────────────────────────────
 // Público — cualquiera puede solicitar una cuenta, queda en revisión de Admin.
+// Área, puesto y rol los asigna el Admin al momento de aprobar.
 export const requestSignup = async (req, res, next) => {
   try {
-    const { name, email, areaId, position } = req.body;
+    const { name, email } = req.body;
 
-    if (!name?.trim() || !email?.trim() || !areaId) {
-      const err = new Error('name, email y areaId son requeridos');
+    if (!name?.trim() || !email?.trim()) {
+      const err = new Error('name y email son requeridos');
       err.status = 400;
       return next(err);
     }
@@ -38,7 +39,7 @@ export const requestSignup = async (req, res, next) => {
     }
 
     const { data, error } = await supabase.from('signup_requests').insert({
-      name: name.trim(), email: normalizedEmail, area_id: areaId, position: position?.trim() || null,
+      name: name.trim(), email: normalizedEmail,
     }).select('id').single();
     if (error) throw error;
 
@@ -82,10 +83,17 @@ export const listRequests = async (req, res, next) => {
 };
 
 // ── PUT /api/v1/signup/requests/:id/approve (Admin) ──────────────────────────
+// El Admin define rol, área y puesto al aprobar — el solicitante no los elige.
 export const approveRequest = async (req, res, next) => {
   try {
     const id     = Number(req.params.id);
-    const roleId = req.body.roleId ?? 1; // Funcionario por defecto
+    const { roleId, areaId, position } = req.body;
+
+    if (!roleId || !areaId || !position?.trim()) {
+      const err = new Error('roleId, areaId y position son requeridos para aprobar');
+      err.status = 400;
+      return next(err);
+    }
 
     const { data: request, error: findError } = await supabase
       .from('signup_requests').select('*').eq('id', id).eq('status', 'pending').single();
@@ -100,7 +108,7 @@ export const approveRequest = async (req, res, next) => {
 
     const { error: profileError } = await supabase.from('profiles').insert({
       id: invited.user.id, name: request.name, email: request.email,
-      role_id: roleId, area_id: request.area_id, position: request.position,
+      role_id: roleId, area_id: areaId, position: position.trim(),
       hire_date: new Date().toISOString().slice(0, 10),
     });
     if (profileError) {
@@ -109,7 +117,8 @@ export const approveRequest = async (req, res, next) => {
     }
 
     const { error: updateError } = await supabase.from('signup_requests').update({
-      status: 'approved', role_id: roleId, reviewed_by: req.user.id, reviewed_at: new Date().toISOString(),
+      status: 'approved', role_id: roleId, area_id: areaId, position: position.trim(),
+      reviewed_by: req.user.id, reviewed_at: new Date().toISOString(),
     }).eq('id', id);
     if (updateError) throw updateError;
 

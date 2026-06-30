@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS signup_requests (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name        varchar(150) NOT NULL,
   email       varchar(255) NOT NULL,
-  area_id     integer NOT NULL REFERENCES areas(id),
+  area_id     integer REFERENCES areas(id), -- lo asigna el Admin al aprobar
   position    varchar(100),
   status      varchar(10) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
   role_id     smallint REFERENCES roles(id),

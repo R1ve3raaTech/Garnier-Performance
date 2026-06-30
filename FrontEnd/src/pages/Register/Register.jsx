@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import api from '../../services/api';
@@ -6,14 +6,9 @@ import { showError } from '../../utils/alerts';
 import logo from '../../images/LogoGarnier.png';
 
 const Register = () => {
-  const [areas,   setAreas]   = useState([]);
-  const [form,    setForm]    = useState({ name: '', email: '', areaId: '', position: '' });
+  const [form,    setForm]    = useState({ name: '', email: '' });
   const [loading, setLoading] = useState(false);
   const [sent,    setSent]    = useState(false);
-
-  useEffect(() => {
-    api.get('/areas').then((res) => setAreas(res.data.data ?? [])).catch(() => {});
-  }, []);
 
   const handleChange = (e) => setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
@@ -24,8 +19,6 @@ const Register = () => {
       await api.post('/signup', {
         name: form.name.trim(),
         email: form.email.trim().toLowerCase(),
-        areaId: Number(form.areaId),
-        position: form.position.trim(),
       });
       setSent(true);
     } catch (err) {
@@ -37,7 +30,7 @@ const Register = () => {
   };
 
   return (
-    <div className="relative h-screen flex items-center justify-center bg-garnier-900 px-4 overflow-x-hidden overflow-y-auto py-8">
+    <div className="relative h-screen flex items-center justify-center bg-garnier-900 px-4 overflow-hidden">
       <motion.div
         className="absolute top-[-100px] right-[-100px] w-80 h-80 bg-brand-500 opacity-10 rounded-full"
         animate={{ scale: [1, 1.1, 1] }}
@@ -50,7 +43,7 @@ const Register = () => {
       />
 
       <motion.div
-        className="w-full max-w-md relative my-auto"
+        className="w-full max-w-md relative"
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: 'easeOut' }}
@@ -118,33 +111,9 @@ const Register = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label htmlFor="areaId" className="label">Área</label>
-                  <div className="relative">
-                    <i className="fi fi-rr-apartment absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm leading-none" />
-                    <select
-                      id="areaId" name="areaId" required
-                      value={form.areaId} onChange={handleChange}
-                      className="input pl-9 appearance-none"
-                    >
-                      <option value="" disabled>Selecciona tu área</option>
-                      {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label htmlFor="position" className="label">Puesto</label>
-                  <div className="relative">
-                    <i className="fi fi-rr-briefcase absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm leading-none" />
-                    <input
-                      id="position" name="position" type="text" required
-                      value={form.position} onChange={handleChange}
-                      placeholder="Developer"
-                      className="input pl-9"
-                    />
-                  </div>
-                </div>
+                <p className="text-xs text-gray-400">
+                  Tu área, puesto y rol los asignará el administrador al aprobar tu solicitud.
+                </p>
 
                 <motion.button
                   type="submit"
