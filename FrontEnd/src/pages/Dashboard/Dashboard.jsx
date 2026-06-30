@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import gsap from 'gsap';
 import { useAuth } from '../../context/AuthContext';
 
 const ROLE_CARDS = {
@@ -44,10 +46,18 @@ const Dashboard = () => {
   const cards    = ROLE_CARDS[user?.role] ?? ROLE_CARDS.Funcionario;
   const hour     = new Date().getHours();
   const greeting = hour < 12 ? 'Buenos días' : hour < 18 ? 'Buenas tardes' : 'Buenas noches';
+  const iconRefs = useRef({});
+
+  const handleIconEnter = (path) => {
+    gsap.to(iconRefs.current[path], { scale: 1.15, rotate: 6, duration: 0.35, ease: 'back.out(2.5)' });
+  };
+  const handleIconLeave = (path) => {
+    gsap.to(iconRefs.current[path], { scale: 1, rotate: 0, duration: 0.3, ease: 'power2.out' });
+  };
 
   return (
     <motion.div
-      className="p-8"
+      className="p-8 overflow-x-hidden"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
@@ -70,7 +80,7 @@ const Dashboard = () => {
 
       {/* Cards */}
       <motion.div
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 min-w-0"
         variants={container}
         initial="hidden"
         animate="show"
@@ -80,17 +90,22 @@ const Dashboard = () => {
             key={path}
             variants={item}
             onClick={() => navigate(path)}
+            onMouseEnter={() => handleIconEnter(path)}
+            onMouseLeave={() => handleIconLeave(path)}
             whileHover={{ scale: 1.03, boxShadow: '0 8px 30px rgba(0,0,0,0.10)' }}
             whileTap={{ scale: 0.97 }}
-            className={`card text-left border-2 transition-colors group ${color} hover:border-brand-300`}
+            className={`card text-left border-2 transition-colors group min-w-0 ${color} hover:border-brand-300`}
           >
-            <div className="w-11 h-11 rounded-xl bg-white shadow-sm flex items-center justify-center mb-4">
+            <div
+              ref={(el) => { iconRefs.current[path] = el; }}
+              className="w-11 h-11 rounded-xl bg-white shadow-sm flex items-center justify-center mb-4"
+            >
               <i className={`fi ${icon} text-xl text-brand-500 leading-none`} />
             </div>
-            <h3 className="font-semibold text-garnier-800 group-hover:text-brand-600 transition-colors">
+            <h3 className="font-semibold text-garnier-800 group-hover:text-brand-600 transition-colors truncate">
               {title}
             </h3>
-            <p className="text-sm text-gray-500 mt-1">{desc}</p>
+            <p className="text-sm text-gray-500 mt-1 truncate">{desc}</p>
           </motion.button>
         ))}
       </motion.div>
